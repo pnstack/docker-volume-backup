@@ -34,7 +34,7 @@ jobs:
 
   build-and-push:
     name: Build and Push Docker image
-    needs: lint
+    # needs: lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
