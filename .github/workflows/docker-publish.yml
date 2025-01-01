@@ -6,10 +6,10 @@ on:
     branches:
       - main
       - develop
-      - "feature/**"
-      - "hotfix/**"
+      - 'feature/**'
+      - 'hotfix/**'
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'
   pull_request:
     branches:
       - main
@@ -20,21 +20,21 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # lint:
-  #   name: Lint Dockerfile
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
+  lint:
+    name: Lint Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  #     - name: Lint Dockerfile
-  #       uses: hadolint/hadolint-action@v3.1.0
-  #       with:
-  #         dockerfile: Dockerfile
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
 
   build-and-push:
     name: Build and Push Docker image
-    # needs: lint
+    needs: lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,6 +43,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short=7 ${{ github.sha }})" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -60,7 +67,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,format=long
+            type=raw,value=sha-${{ steps.vars.outputs.sha_short }}
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
@@ -72,14 +79,18 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Print image tags
+      - name: Print image details
         if: github.event_name != 'pull_request'
         run: |
           echo "Published tags:"
           echo "${{ steps.meta.outputs.tags }}" | tr ' ' '\n'
+          echo -e "\nPlatforms:"
+          echo "- linux/amd64"
+          echo "- linux/arm64"
