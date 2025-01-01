@@ -215,64 +215,6 @@ class BackupManager:
                 sha256_hash.update(chunk)
         return sha256_hash.hexdigest()
         
-    def _get_file_metadata(self, file_path: Path) -> FileMetadata:
-        """Get complete file metadata including ownership and permissions"""
-        stat = file_path.stat()
-        try:
-            # Try to get user/group names, fallback to IDs if not found
-            try:
-                owner = pwd.getpwuid(stat.st_uid).pw_name
-            except KeyError:
-                owner = str(stat.st_uid)
-                
-            try:
-                group = grp.getgrgid(stat.st_gid).gr_name
-            except KeyError:
-                group = str(stat.st_gid)
-                
-            return FileMetadata(
-                path=str(file_path),
-                owner=owner,
-                group=group,
-                mode=stat.st_mode,
-                size=stat.st_size,
-                modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                checksum=self._calculate_file_hash(file_path)
-            )
-        except Exception as e:
-            logging.warning(f"Error getting metadata for {file_path}: {e}")
-            # Return basic metadata if detailed lookup fails
-            return FileMetadata(
-                path=str(file_path),
-                owner=str(stat.st_uid),
-                group=str(stat.st_gid),
-                mode=stat.st_mode,
-                size=stat.st_size,
-                modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                checksum=self._calculate_file_hash(file_path)
-            )
-
-    def _apply_metadata(self, file_path: Path, metadata: FileMetadata):
-        """Apply stored metadata to restored file"""
-        try:
-            os.chmod(file_path, metadata.mode)
-            
-            try:
-                uid = pwd.getpwnam(metadata.owner).pw_uid
-                gid = grp.getgrnam(metadata.group).gr_gid
-            except KeyError:
-                uid = int(metadata.owner) if metadata.owner.isdigit() else -1
-                gid = int(metadata.group) if metadata.group.isdigit() else -1
-            
-            if uid != -1 and gid != -1:
-                try:
-                    os.chown(file_path, uid, gid)
-                except PermissionError:
-                    logging.warning(f"Cannot set ownership for {file_path}")
-                    
-        except Exception as e:
-            logging.error(f"Failed to apply metadata to {file_path}: {str(e)}")
-        
     def backup_directory(self, source_dir: Path, backup_dir: Path) -> bool:
         """Create backup of a directory with progress tracking and manifest"""
         timestamp = self._get_timestamp()
@@ -296,7 +238,7 @@ class BackupManager:
             
             archive_checksums = []  # For overall manifest checksum
             
-            # Get total size for progress tracking
+            # Get total size for progress tracking 
             total_size = self._get_dir_size(source_dir)
             logging.info(f"Total size to backup: {humanize.naturalsize(total_size)}")
             
@@ -309,25 +251,15 @@ class BackupManager:
                     
                     tracker = ProgressTracker(dir_size, "Compression")
                     
-                    # Collect file information for manifest
-                    archive_files = []
                     file_count = 0
                     
                     with tarfile.open(archive_path, "w:gz") as tar:
                         for file_path in dir_path.rglob("*"):
                             if file_path.is_file():
-                                metadata = self._get_file_metadata(file_path)
+                                file_count += 1
                                 relative_path = str(file_path.relative_to(dir_path))
-                                
-                                tar_info = tar.gettarinfo(str(file_path), arcname=relative_path)
-                                tar_info.uid = pwd.getpwnam(metadata.owner).pw_uid if isinstance(metadata.owner, str) else int(metadata.owner)  
-                                tar_info.gid = grp.getgrnam(metadata.group).gr_gid if isinstance(metadata.group, str) else int(metadata.group)
-                                tar_info.mode = metadata.mode
-                                
-                                with open(file_path, "rb") as f:
-                                    tar.addfile(tar_info, f)
-                                
-                                tracker.update(metadata.size)
+                                tar.add(str(file_path), arcname=relative_path)
+                                tracker.update(file_path.stat().st_size)
                     
                     tracker.close()
                     
@@ -344,7 +276,6 @@ class BackupManager:
                         'compressed_size': compressed_size,
                         'compression_ratio': ratio,
                         'file_count': file_count,
-                        'files': archive_files,
                         'checksum': archive_hash
                     }
                     manifest_data['archives'].append(archive_info)
@@ -435,19 +366,7 @@ class BackupManager:
                     members = tar.getmembers()
                     for member in members:
                         tar.extract(member, path=extract_dir)
-                        
                         if member.isfile():
-                            file_path = extract_dir / member.name
-                            metadata = FileMetadata(
-                                path=str(file_path),
-                                owner=str(member.uid),  # Use ID directly
-                                group=str(member.gid),  # Use ID directly
-                                mode=member.mode,
-                                size=member.size,
-                                modified=datetime.fromtimestamp(member.mtime).isoformat(),
-                                checksum=""
-                            )
-                            self._apply_metadata(file_path, metadata)
                             tracker.update(member.size)
                             
                 restored_dirs.add(extract_dir)
@@ -467,7 +386,7 @@ class BackupManager:
         except Exception as e:
             logging.error(f"Restore failed: {str(e)}")
             return False
-
+        
 def setup_logging(log_dir: Path) -> None:
     """Configure detailed logging with both file and console handlers"""
     log_dir.mkdir(parents=True, exist_ok=True)
