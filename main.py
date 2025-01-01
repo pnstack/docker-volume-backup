@@ -219,21 +219,38 @@ class BackupManager:
         """Get complete file metadata including ownership and permissions"""
         stat = file_path.stat()
         try:
-            owner = pwd.getpwuid(stat.st_uid).pw_name
-            group = grp.getgrgid(stat.st_gid).gr_name
-        except KeyError:
-            owner = str(stat.st_uid)
-            group = str(stat.st_gid)
-            
-        return FileMetadata(
-            path=str(file_path),
-            owner=owner,
-            group=group,
-            mode=stat.st_mode,
-            size=stat.st_size,
-            modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-            checksum=self._calculate_file_hash(file_path)
-        )
+            # Try to get user/group names, fallback to IDs if not found
+            try:
+                owner = pwd.getpwuid(stat.st_uid).pw_name
+            except KeyError:
+                owner = str(stat.st_uid)
+                
+            try:
+                group = grp.getgrgid(stat.st_gid).gr_name
+            except KeyError:
+                group = str(stat.st_gid)
+                
+            return FileMetadata(
+                path=str(file_path),
+                owner=owner,
+                group=group,
+                mode=stat.st_mode,
+                size=stat.st_size,
+                modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                checksum=self._calculate_file_hash(file_path)
+            )
+        except Exception as e:
+            logging.warning(f"Error getting metadata for {file_path}: {e}")
+            # Return basic metadata if detailed lookup fails
+            return FileMetadata(
+                path=str(file_path),
+                owner=str(stat.st_uid),
+                group=str(stat.st_gid),
+                mode=stat.st_mode,
+                size=stat.st_size,
+                modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                checksum=self._calculate_file_hash(file_path)
+            )
 
     def _apply_metadata(self, file_path: Path, metadata: FileMetadata):
         """Apply stored metadata to restored file"""
@@ -388,10 +405,7 @@ class BackupManager:
     def restore_directory(self, restore_dir: Path, output_dir: Path) -> bool:
         """Restore from backup with progress tracking"""
         try:
-            # Create output directory
             output_dir.mkdir(parents=True, exist_ok=True)
-            
-            total_progress = 0
             archives = list(restore_dir.glob("*.tar.gz"))
             
             # Calculate total size first
@@ -406,14 +420,12 @@ class BackupManager:
             restored_dirs = set()
             
             for archive in archives:
-                # Create a directory for this archive based on archive name without .tar.gz
-                archive_name = archive.stem.replace('.tar', '')  # Remove both .tar and .gz
+                archive_name = archive.stem.replace('.tar', '')
                 extract_dir = output_dir / archive_name
                 
                 archive_size = archive.stat().st_size
                 logging.info(f"Restoring {archive_name} ({humanize.naturalsize(archive_size)})")
                 
-                # Create or clean the extraction directory
                 if extract_dir.exists():
                     import shutil
                     shutil.rmtree(extract_dir)
@@ -428,8 +440,8 @@ class BackupManager:
                             file_path = extract_dir / member.name
                             metadata = FileMetadata(
                                 path=str(file_path),
-                                owner=pwd.getpwuid(member.uid).pw_name if member.uid >= 0 else str(member.uid),
-                                group=grp.getgrgid(member.gid).gr_name if member.gid >= 0 else str(member.gid),
+                                owner=str(member.uid),  # Use ID directly
+                                group=str(member.gid),  # Use ID directly
                                 mode=member.mode,
                                 size=member.size,
                                 modified=datetime.fromtimestamp(member.mtime).isoformat(),
@@ -450,7 +462,6 @@ class BackupManager:
                 dir_size = self._get_dir_size(dir_path)
                 logging.info(f"  {dir_path.name}: {humanize.naturalsize(dir_size)}")
             
-            logging.info(f"Restore completed at {self._get_timestamp()}")
             return True
             
         except Exception as e:
